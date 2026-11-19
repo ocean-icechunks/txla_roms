@@ -53,7 +53,7 @@ store, so a typo'd target fails instead of silently becoming a new, empty store.
 `workflow_dispatch`, with optional `force` and `create` inputs) and executes:
 
 ```bash
-aws s3 ls s3://ocean-icechunks/txla-roms/ --endpoint-url https://data.source.coop  # sign-in check
+aws s3api list-objects-v2 --bucket ocean-icechunks --prefix txla-roms/ --endpoint-url https://data.source.coop  # sign-in check
 pixi run txla update
 pixi run txla status --format markdown
 ```

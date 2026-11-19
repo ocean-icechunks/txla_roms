@@ -84,12 +84,16 @@ jobs:
 
       # From here on, the AWS SDKs act as ocean-icechunks--txla-roms-update-store. Fail fast,
       # with a clear error, if the sign-in does not reach the product.
+      # (`aws s3 ls` exits 1 on an empty prefix, which a new product is; list-objects-v2
+      # succeeds on an empty prefix and still fails on a denied or broken sign-in.)
       - name: Check destination access
-        run:
-          aws s3 ls "s3://$TXLA_S3_BUCKET/${TXLA_S3_PREFIX%%/*}/" --endpoint-url
-          "$SOURCE_COOP"
+        run: >-
+          aws s3api list-objects-v2 --bucket "$TXLA_S3_BUCKET" --prefix
+          "${TXLA_S3_PREFIX%%/*}/" --max-keys 5 --query "KeyCount"
+          --endpoint-url "$SOURCE_COOP"
 
       - uses: prefix-dev/setup-pixi@ad1da6449d9e506fd127fd67ab2d054a769f6a94 # v0.11.2
+        id: pixi
         with:
           environments: default
 
@@ -103,7 +107,7 @@ jobs:
       # stands (it can still fail itself if the store is unreachable).
       - name: Store status
         id: status
-        if: always()
+        if: always() && steps.pixi.outcome == 'success'
         run: |
           # Redirect rather than pipe through tee: the default shell has no pipefail.
           pixi run txla status --format markdown > status.md
