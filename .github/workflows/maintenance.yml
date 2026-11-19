@@ -25,20 +25,23 @@ concurrency:
 
 env:
   FORCE_COLOR: 3
+  # Source Cooperative's data proxy (S3 API) and STS endpoint.
+  SOURCE_COOP: https://data.source.coop
 
 jobs:
   expire:
     name: Expire + GC
     runs-on: ubuntu-latest
-    if: vars.TXLA_S3_BUCKET != '' && vars.SOURCE_COOP_SERVICE_ACCOUNT != ''
-    environment: source-coop
+    # Only the upstream repository touches the store; no `environment:` (see daily.yml).
+    if: github.repository == 'ocean-icechunks/txla_roms'
     timeout-minutes: 30
     permissions:
       contents: read
       id-token: write # OIDC sign-in as the Source Coop service account
     env:
-      TXLA_S3_BUCKET: ${{ vars.TXLA_S3_BUCKET }}
-      TXLA_S3_PREFIX: ${{ vars.TXLA_S3_PREFIX || 'txla_roms.icechunk' }}
+      TXLA_S3_BUCKET: ${{ vars.TXLA_S3_BUCKET || 'ocean-icechunks' }}
+      TXLA_S3_PREFIX:
+        ${{ vars.TXLA_S3_PREFIX || 'txla-roms/txla_roms.icechunk' }}
       TXLA_S3_REGION: ${{ vars.TXLA_S3_REGION || 'us-west-2' }}
       TXLA_S3_ENDPOINT:
         ${{ vars.TXLA_S3_ENDPOINT || 'https://data.source.coop' }}
@@ -49,13 +52,14 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Sign in to Source Cooperative (service account)
+      - name:
+          Sign in to Source Cooperative as
+          ocean-icechunks--txla-roms-update-store
         uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
         with:
-          role-to-assume:
-            arn:aws:iam::${{ vars.SOURCE_COOP_SERVICE_ACCOUNT }}:role/FullAccess
-          audience: https://data.source.coop
-          sts-endpoint: https://data.source.coop/.sts
+          role-to-assume: arn:aws:iam::ocean-icechunks--txla-roms-update-store:role/FullAccess
+          audience: ${{ env.SOURCE_COOP }}
+          sts-endpoint: ${{ env.SOURCE_COOP }}/.sts
           aws-region: us-west-2
           role-duration-seconds: 7200
 

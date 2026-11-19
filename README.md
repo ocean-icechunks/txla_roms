@@ -19,9 +19,12 @@ from txla_roms_icechunk.load import open_txla  # standalone: copy src/txla_roms_
 # a local build (see "Maintaining this store")
 best = open_txla("best", repo_path="local-store")
 
-# the published store, once the daily workflow is configured (anonymous, no credentials)
+# the published store on Source Cooperative (anonymous, no credentials), after the first workflow run
 best = open_txla(
-    "best", s3_bucket="ocean-icechunks", s3_prefix="txla_roms.icechunk", s3_endpoint="https://data.source.coop"
+    "best",
+    s3_bucket="ocean-icechunks",
+    s3_prefix="txla-roms/txla_roms.icechunk",
+    s3_endpoint="https://data.source.coop",
 )
 
 sst = best.temp.isel(Depth=0).sel(time="2026-11-01T12:00").load()
@@ -81,12 +84,15 @@ listed in each group's `metadata_repairs` attribute and in
 
 ## Update cadence
 
-A GitHub Actions job ([`daily.yml`](.github/workflows/daily.yml)) runs twice a
-day. It lists the archive and compares it with the fingerprint recorded on
-`main`; if anything changed it rebuilds both groups in **one snapshot**,
-validates against the source, and tags `data-through-<last valid day>`. An
-unchanged listing is a no-op. A full rebuild is the update method on purpose:
-each new run changes the last three days of `/best`.
+A GitHub Actions job ([`daily.yml`](.github/workflows/daily.yml)) runs nightly
+at 02:00 UTC, signed in to Source Cooperative as
+`ocean-icechunks--txla-roms-update-store`, and writes
+`s3://ocean-icechunks/txla-roms/txla_roms.icechunk`. It lists the archive and
+compares it with the fingerprint recorded on `main`; if anything changed it
+rebuilds both groups in **one snapshot**, validates against the source, and tags
+`data-through-<last valid day>`. An unchanged listing is a no-op. A full rebuild
+is the update method on purpose: each new run changes the last three days of
+`/best`.
 
 ## Things to know
 

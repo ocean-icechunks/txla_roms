@@ -38,8 +38,8 @@ Every command takes exactly one storage target, as CLI options or env vars:
 | Option          | Env var            | Target                                                                   |
 | --------------- | ------------------ | ------------------------------------------------------------------------ |
 | `--store-path`  | `TXLA_STORE_PATH`  | Local Icechunk store directory                                           |
-| `--s3-bucket`   | `TXLA_S3_BUCKET`   | S3 bucket (with the options below)                                       |
-| `--s3-prefix`   | `TXLA_S3_PREFIX`   | Key prefix, default `txla_roms.icechunk`                                 |
+| `--s3-bucket`   | `TXLA_S3_BUCKET`   | S3 bucket (with the options below); Actions default `ocean-icechunks`    |
+| `--s3-prefix`   | `TXLA_S3_PREFIX`   | Key prefix, default `txla-roms/txla_roms.icechunk`                       |
 | `--s3-region`   | `TXLA_S3_REGION`   | Bucket region, default `us-west-2`                                       |
 | `--s3-endpoint` | `TXLA_S3_ENDPOINT` | Custom endpoint (e.g. Source.coop)                                       |
 | `--s3-acl`      | `TXLA_S3_ACL`      | Canned ACL on writes, default bucket-owner-full-control; `none` disables |
@@ -49,10 +49,11 @@ store, so a typo'd target fails instead of silently becoming a new, empty store.
 
 ## Routine operation (automated)
 
-[`daily.yml`](../.github/workflows/daily.yml) runs twice a day (plus
-`workflow_dispatch`, with an optional `force` input) and executes:
+[`daily.yml`](../.github/workflows/daily.yml) runs nightly at 02:00 UTC (plus
+`workflow_dispatch`, with optional `force` and `create` inputs) and executes:
 
 ```bash
+aws s3 ls s3://ocean-icechunks/txla-roms/ --endpoint-url https://data.source.coop  # sign-in check
 pixi run txla update
 pixi run txla status --format markdown
 ```
@@ -67,23 +68,29 @@ One writer, always: the workflow uses
 `maintenance.yml`. There is no commit-conflict handling in the code; do not run
 a second writer against the production store while a workflow run is active.
 
-The workflow **skips itself** unless both the `TXLA_S3_BUCKET` and
-`SOURCE_COOP_SERVICE_ACCOUNT` repository variables are set, so the schedule is
-safe to have enabled before the destination exists. Configuring production is:
+**Destination.** The store is
+`s3://ocean-icechunks/txla-roms/txla_roms.icechunk` on Source Cooperative
+(product `ocean-icechunks/txla-roms`), written through the data proxy
+`https://data.source.coop`. The workflow signs in as the Source Cooperative
+service account **`ocean-icechunks--txla-roms-update-store`**
+(`arn:aws:iam::ocean-icechunks--txla-roms-update-store:role/FullAccess`) with
+GitHub OIDC; no secret is stored. The trust is for this repository's `main`
+branch, so:
 
-1. Create the `source-coop` GitHub environment, restricted to `main`.
-2. Set repository variables `TXLA_S3_BUCKET` (e.g. `ocean-icechunks`),
-   `TXLA_S3_PREFIX` (default `txla_roms.icechunk`) and
-   `SOURCE_COOP_SERVICE_ACCOUNT`; optionally `TXLA_STATUS_ISSUE` (an issue
-   number whose body the workflow rewrites with the status after every run).
-3. Run the workflow once by hand. The first run against an empty prefix needs
-   the store to exist: create it once with
-   `pixi run txla-source-coop update --create` from a machine with the Source
-   Coop profile, or temporarily add `--create` to the workflow step.
+- the schedule works only while `main` is the default branch;
+- the jobs set no `environment:` (that would change the OIDC subject claim);
+- both workflows run only in `ocean-icechunks/txla_roms` (forks and copies
+  skip).
 
-`TXLA_S3_ENDPOINT` and `TXLA_S3_REGION` default to `https://data.source.coop` /
-`us-west-2`; `TXLA_S3_ACL` stays overridable (set `none` if the endpoint rejects
-`x-amz-acl`).
+Repository variables `TXLA_S3_BUCKET`, `TXLA_S3_PREFIX`, `TXLA_S3_REGION`,
+`TXLA_S3_ENDPOINT` and `TXLA_S3_ACL` override the defaults; none is required.
+
+**First run.** The prefix starts empty, and `update` refuses to create a store
+unless asked. Run the workflow once by hand from the Actions tab with **create**
+ticked (or `gh workflow run daily.yml -f create=true`). Until then the nightly
+run fails with "No Icechunk repository at ...", which is harmless. Optionally
+set `TXLA_STATUS_ISSUE` to an issue number whose body the workflow rewrites with
+the status after every run.
 
 **Status reporting.** Every run ends with `txla status --format markdown`,
 written to the run's step summary, and (if `TXLA_STATUS_ISSUE` is set) to a
