@@ -1,0 +1,70 @@
+name: Maintenance
+
+# Snapshot expiry + garbage collection - manual dispatch only, dry-run by default. Do NOT add
+# a schedule (or run it for real against production) until GC has been checked against a
+# throwaway copy of the store: it is the one destructive operation in this pipeline. Tags are
+# never deleted. See docs/operations.md.
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Report what would be collected without deleting
+        type: boolean
+        default: true
+      days:
+        description: Retention window in days
+        type: string
+        default: "35"
+
+permissions: {}
+
+concurrency:
+  group: txla-store
+  cancel-in-progress: false
+
+env:
+  FORCE_COLOR: 3
+
+jobs:
+  expire:
+    name: Expire + GC
+    runs-on: ubuntu-latest
+    if: vars.TXLA_S3_BUCKET != '' && vars.SOURCE_COOP_SERVICE_ACCOUNT != ''
+    environment: source-coop
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      id-token: write # OIDC sign-in as the Source Coop service account
+    env:
+      TXLA_S3_BUCKET: ${{ vars.TXLA_S3_BUCKET }}
+      TXLA_S3_PREFIX: ${{ vars.TXLA_S3_PREFIX || 'txla_roms.icechunk' }}
+      TXLA_S3_REGION: ${{ vars.TXLA_S3_REGION || 'us-west-2' }}
+      TXLA_S3_ENDPOINT:
+        ${{ vars.TXLA_S3_ENDPOINT || 'https://data.source.coop' }}
+      TXLA_S3_ACL: ${{ vars.TXLA_S3_ACL || 'bucket-owner-full-control' }}
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Sign in to Source Cooperative (service account)
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume:
+            arn:aws:iam::${{ vars.SOURCE_COOP_SERVICE_ACCOUNT }}:role/FullAccess
+          audience: https://data.source.coop
+          sts-endpoint: https://data.source.coop/.sts
+          aws-region: us-west-2
+          role-duration-seconds: 7200
+
+      - uses: prefix-dev/setup-pixi@ad1da6449d9e506fd127fd67ab2d054a769f6a94 # v0.11.2
+        with:
+          environments: default
+
+      - name: Expire snapshots + garbage collect
+        env:
+          DRY_RUN: ${{ inputs.dry_run && '--dry-run' || '--no-dry-run' }}
+          DAYS: ${{ inputs.days }}
+        run: pixi run txla expire --days "$DAYS" "$DRY_RUN"

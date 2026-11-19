@@ -1,0 +1,147 @@
+name: Daily update
+
+# Refresh the store from TAMU-CC's archive. Best-effort by design: `txla update` compares the
+# source listing with the fingerprint recorded on `main` and rebuilds only when something
+# changed, so a failed or skipped run needs no retry - the next run catches up. Every run also
+# writes the store status to the step summary and (if TXLA_STATUS_ISSUE is set) to a pinned
+# issue, and re-enables this workflow so GitHub's 60-day inactivity rule never disables the
+# schedule. See docs/operations.md.
+
+on:
+  workflow_dispatch:
+    inputs:
+      force:
+        description: Rebuild even if the source listing is unchanged
+        type: boolean
+        default: false
+  schedule:
+    # A run reaches history/ the night after it is in latest/; twice a day catches it
+    # within ~12 h. Runs with an unchanged listing are a no-op (no snapshot).
+    - cron: "20 7,19 * * *"
+
+permissions: {}
+
+# Exactly one writer against the store, ever. Queued runs wait; nothing is cancelled
+# mid-commit.
+concurrency:
+  group: txla-store
+  cancel-in-progress: false
+
+env:
+  FORCE_COLOR: 3
+
+jobs:
+  update:
+    name: Update store
+    runs-on: ubuntu-latest
+    if: vars.TXLA_S3_BUCKET != '' && vars.SOURCE_COOP_SERVICE_ACCOUNT != ''
+    environment: source-coop # trust is scoped to this environment (main only)
+    timeout-minutes: 45
+    outputs:
+      status: ${{ steps.status.outputs.markdown }}
+    permissions:
+      contents: read
+      id-token: write # OIDC sign-in as the Source Coop service account
+    env:
+      # No job-wide AWS_ENDPOINT_URL_S3: the CLI passes the endpoint explicitly.
+      TXLA_S3_BUCKET: ${{ vars.TXLA_S3_BUCKET }}
+      TXLA_S3_PREFIX: ${{ vars.TXLA_S3_PREFIX || 'txla_roms.icechunk' }}
+      TXLA_S3_REGION: ${{ vars.TXLA_S3_REGION || 'us-west-2' }}
+      TXLA_S3_ENDPOINT:
+        ${{ vars.TXLA_S3_ENDPOINT || 'https://data.source.coop' }}
+      TXLA_S3_ACL: ${{ vars.TXLA_S3_ACL || 'bucket-owner-full-control' }}
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Sign in to Source Cooperative (service account)
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume:
+            arn:aws:iam::${{ vars.SOURCE_COOP_SERVICE_ACCOUNT }}:role/FullAccess
+          audience: https://data.source.coop
+          sts-endpoint: https://data.source.coop/.sts
+          aws-region: us-west-2
+          # Icechunk keeps the first credentials it reads (no mid-run renewal); outlive
+          # timeout-minutes. See docs/operations.md#credentials.
+          role-duration-seconds: 7200
+
+      - uses: prefix-dev/setup-pixi@ad1da6449d9e506fd127fd67ab2d054a769f6a94 # v0.11.2
+        with:
+          environments: default
+
+      - name: Update store
+        env:
+          FORCE: ${{ inputs.force && '--force' || '--no-force' }}
+        run: pixi run txla update "$FORCE"
+
+      # Runs even after a failed update so the summary/issue still show where the store
+      # stands (it can still fail itself if the store is unreachable).
+      - name: Store status
+        id: status
+        if: always()
+        run: |
+          # Redirect rather than pipe through tee: the default shell has no pipefail.
+          pixi run txla status --format markdown > status.md
+          cat status.md
+          cat status.md >> "$GITHUB_STEP_SUMMARY"
+          delimiter="EOF_$(openssl rand -hex 16)"
+          {
+            echo "markdown<<$delimiter"
+            cat status.md
+            echo "$delimiter"
+          } >> "$GITHUB_OUTPUT"
+
+  report:
+    name: Report status
+    runs-on: ubuntu-latest
+    needs: update
+    if: >-
+      always() && vars.TXLA_S3_BUCKET != '' && vars.SOURCE_COOP_SERVICE_ACCOUNT
+      != ''
+    timeout-minutes: 5
+    permissions:
+      actions: write # re-enable this workflow (keepalive)
+      issues: write # edit the status issue
+    env:
+      GH_TOKEN: ${{ github.token }}
+
+    steps:
+      # GitHub disables scheduled workflows in public repos after 60 days without repo
+      # activity. Re-enabling an already-enabled workflow resets that clock.
+      - name: Keepalive (re-enable this workflow)
+        run:
+          gh api -X PUT
+          "repos/$GITHUB_REPOSITORY/actions/workflows/daily.yml/enable"
+
+      - name: Update status issue
+        if: vars.TXLA_STATUS_ISSUE != ''
+        env:
+          ISSUE: ${{ vars.TXLA_STATUS_ISSUE }}
+          RESULT: ${{ needs.update.result }}
+          EVENT: ${{ github.event_name }}
+          STATUS_MD: ${{ needs.update.outputs.status }}
+        run: |
+          case "$RESULT" in
+            success) icon="✅" ;;
+            failure) icon="❌" ;;
+            *) icon="⚠️" ;;
+          esac
+          {
+            echo "## TXLA ROMS forecast (TAMU-CC) store status"
+            echo
+            echo "- Last run: $icon $RESULT ([run $GITHUB_RUN_ID]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID))"
+            echo "- Updated: $(date -u '+%Y-%m-%d %H:%M UTC') (trigger: $EVENT)"
+            echo
+            if [ -n "$STATUS_MD" ]; then
+              printf '%s\n' "$STATUS_MD"
+            else
+              echo "_Status unavailable — see run log._"
+            fi
+            echo
+            echo "---"
+            echo "_This issue is updated automatically by \`daily.yml\`; manual edits will be overwritten._"
+          } > body.md
+          gh issue edit "$ISSUE" --repo "$GITHUB_REPOSITORY" --body-file body.md

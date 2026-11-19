@@ -1,0 +1,9 @@
+# Configuration for zizmor (https://docs.zizmor.sh)
+rules:
+  unpinned-uses:
+    config:
+      policies:
+        # codecov/codecov-action@v7 is not hash-pinned yet (as in noaa_oisst). Pin it and remove
+        # this exception.
+        "codecov/codecov-action": ref-pin
+        "*": hash-pin
