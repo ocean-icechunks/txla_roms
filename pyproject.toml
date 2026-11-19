@@ -111,6 +111,8 @@ ignore = [
 py-version = "3.12"
 reports.output-format = "colorized"
 similarities.ignore-imports = "yes"
+# C-extension members pylint cannot introspect
+typecheck.generated-members = ["netCDF4.*", ".*StringDType"]
 messages_control.disable = [
   "design",
   "fixme",
@@ -121,6 +123,10 @@ messages_control.disable = [
   "invalid-name",
   "protected-access",
   "wrong-import-position",
+  "unused-import",           # ruff F401 covers this; build.py re-exports helpers for the notebooks
+  "use-dict-literal",        # ruff C408 is ignored on purpose
+  "broad-exception-caught",  # retry loops re-raise after the last attempt
+  "global-statement",        # one object-store registry per worker process
 ]
 
 [tool.uv]
