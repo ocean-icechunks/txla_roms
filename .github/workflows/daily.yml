@@ -1,23 +1,30 @@
 name: Daily update
 
-# Refresh the store from TAMU-CC's archive. Best-effort by design: `txla update` compares the
-# source listing with the fingerprint recorded on `main` and rebuilds only when something
-# changed, so a failed or skipped run needs no retry - the next run catches up. Every run also
-# writes the store status to the step summary and (if TXLA_STATUS_ISSUE is set) to a pinned
-# issue, and re-enables this workflow so GitHub's 60-day inactivity rule never disables the
-# schedule. See docs/operations.md.
+# Refresh the published store from TAMU-CC's archive. Best-effort by design: `txla update`
+# compares the source listing with the fingerprint recorded on `main` and rebuilds only when
+# something changed, so a failed or skipped run needs no retry - the next run catches up.
+# Every run also writes the store status to the step summary and (if TXLA_STATUS_ISSUE is set)
+# to a pinned issue, and re-enables this workflow so GitHub's 60-day inactivity rule never
+# disables the schedule. See docs/operations.md.
 
 on:
-  workflow_dispatch:
+  workflow_dispatch: # and by hand, from the Actions tab
     inputs:
       force:
         description: Rebuild even if the source listing is unchanged
         type: boolean
         default: false
+      create:
+        description: >-
+          Create the store if it does not exist yet (first run only; every other
+          run refuses to create one, so a wrong prefix fails instead of silently
+          starting a new store)
+        type: boolean
+        default: false
   schedule:
-    # A run reaches history/ the night after it is in latest/; twice a day catches it
-    # within ~12 h. Runs with an unchanged listing are a no-op (no snapshot).
-    - cron: "20 7,19 * * *"
+    # Nightly at 02:00 UTC; works only if main is the default branch. A run reaches history/
+    # the night after it is in latest/. Runs with an unchanged listing are a no-op.
+    - cron: "0 2 * * *"
 
 permissions: {}
 
@@ -29,23 +36,29 @@ concurrency:
 
 env:
   FORCE_COLOR: 3
+  # Source Cooperative's data proxy (S3 API) and STS endpoint.
+  SOURCE_COOP: https://data.source.coop
 
 jobs:
   update:
     name: Update store
     runs-on: ubuntu-latest
-    if: vars.TXLA_S3_BUCKET != '' && vars.SOURCE_COOP_SERVICE_ACCOUNT != ''
-    environment: source-coop # trust is scoped to this environment (main only)
+    # Only the upstream repository writes the store; forks and copies skip.
+    if: github.repository == 'ocean-icechunks/txla_roms'
+    # No `environment:` here: Source Cooperative trusts this repository's main branch, and an
+    # environment would change the OIDC subject claim the service account is matched on.
     timeout-minutes: 45
     outputs:
       status: ${{ steps.status.outputs.markdown }}
     permissions:
       contents: read
-      id-token: write # OIDC sign-in as the Source Coop service account
+      id-token: write # required for aws-actions/configure-aws-credentials (OIDC sign-in)
     env:
-      # No job-wide AWS_ENDPOINT_URL_S3: the CLI passes the endpoint explicitly.
-      TXLA_S3_BUCKET: ${{ vars.TXLA_S3_BUCKET }}
-      TXLA_S3_PREFIX: ${{ vars.TXLA_S3_PREFIX || 'txla_roms.icechunk' }}
+      # No job-wide AWS_ENDPOINT_URL: the CLI passes the endpoint explicitly, so nothing else
+      # is routed through the proxy by accident. Repository variables override the defaults.
+      TXLA_S3_BUCKET: ${{ vars.TXLA_S3_BUCKET || 'ocean-icechunks' }}
+      TXLA_S3_PREFIX:
+        ${{ vars.TXLA_S3_PREFIX || 'txla-roms/txla_roms.icechunk' }}
       TXLA_S3_REGION: ${{ vars.TXLA_S3_REGION || 'us-west-2' }}
       TXLA_S3_ENDPOINT:
         ${{ vars.TXLA_S3_ENDPOINT || 'https://data.source.coop' }}
@@ -56,17 +69,25 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Sign in to Source Cooperative (service account)
+      - name:
+          Sign in to Source Cooperative as
+          ocean-icechunks--txla-roms-update-store
         uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
         with:
-          role-to-assume:
-            arn:aws:iam::${{ vars.SOURCE_COOP_SERVICE_ACCOUNT }}:role/FullAccess
-          audience: https://data.source.coop
-          sts-endpoint: https://data.source.coop/.sts
+          role-to-assume: arn:aws:iam::ocean-icechunks--txla-roms-update-store:role/FullAccess
+          audience: ${{ env.SOURCE_COOP }}
+          sts-endpoint: ${{ env.SOURCE_COOP }}/.sts
           aws-region: us-west-2
           # Icechunk keeps the first credentials it reads (no mid-run renewal); outlive
           # timeout-minutes. See docs/operations.md#credentials.
           role-duration-seconds: 7200
+
+      # From here on, the AWS SDKs act as ocean-icechunks--txla-roms-update-store. Fail fast,
+      # with a clear error, if the sign-in does not reach the product.
+      - name: Check destination access
+        run:
+          aws s3 ls "s3://$TXLA_S3_BUCKET/${TXLA_S3_PREFIX%%/*}/" --endpoint-url
+          "$SOURCE_COOP"
 
       - uses: prefix-dev/setup-pixi@ad1da6449d9e506fd127fd67ab2d054a769f6a94 # v0.11.2
         with:
@@ -75,7 +96,8 @@ jobs:
       - name: Update store
         env:
           FORCE: ${{ inputs.force && '--force' || '--no-force' }}
-        run: pixi run txla update "$FORCE"
+          CREATE: ${{ inputs.create && '--create' || '--no-create' }}
+        run: pixi run txla update "$FORCE" "$CREATE"
 
       # Runs even after a failed update so the summary/issue still show where the store
       # stands (it can still fail itself if the store is unreachable).
@@ -98,9 +120,7 @@ jobs:
     name: Report status
     runs-on: ubuntu-latest
     needs: update
-    if: >-
-      always() && vars.TXLA_S3_BUCKET != '' && vars.SOURCE_COOP_SERVICE_ACCOUNT
-      != ''
+    if: always() && github.repository == 'ocean-icechunks/txla_roms'
     timeout-minutes: 5
     permissions:
       actions: write # re-enable this workflow (keepalive)

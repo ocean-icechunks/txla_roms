@@ -36,7 +36,7 @@ def main_options(
     s3_bucket: Annotated[str | None, typer.Option(envvar="TXLA_S3_BUCKET", help="Destination S3 bucket.")] = None,
     s3_prefix: Annotated[
         str, typer.Option(envvar="TXLA_S3_PREFIX", help="Key prefix inside the bucket.")
-    ] = "txla_roms.icechunk",
+    ] = "txla-roms/txla_roms.icechunk",
     s3_region: Annotated[str, typer.Option(envvar="TXLA_S3_REGION", help="Destination bucket region.")] = "us-west-2",
     s3_endpoint: Annotated[
         str | None,

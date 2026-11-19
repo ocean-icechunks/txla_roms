@@ -23,7 +23,7 @@ def open_txla(
     repo_path: str | None = "local-store",
     *,
     s3_bucket: str | None = None,
-    s3_prefix: str = "txla_roms.icechunk",
+    s3_prefix: str = "txla-roms/txla_roms.icechunk",
     s3_region: str = "us-west-2",
     s3_endpoint: str | None = None,
     branch: str = "main",

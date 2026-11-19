@@ -158,4 +158,4 @@ dev = { features = ["dev"], solve-group = "default" }
 test = { features = ["test"], solve-group = "default" }
 
 [tool.pixi.tasks]
-txla-source-coop = "AWS_PROFILE=source-coop TXLA_S3_BUCKET=ocean-icechunks TXLA_S3_PREFIX=txla_roms.icechunk TXLA_S3_ENDPOINT=https://data.source.coop pixi run txla"
+txla-source-coop = "AWS_PROFILE=source-coop TXLA_S3_BUCKET=ocean-icechunks TXLA_S3_PREFIX=txla-roms/txla_roms.icechunk TXLA_S3_ENDPOINT=https://data.source.coop pixi run txla"

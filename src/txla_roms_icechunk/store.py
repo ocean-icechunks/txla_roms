@@ -30,7 +30,7 @@ class StoreTarget:
 
     local_path: Path | None = None
     s3_bucket: str | None = None
-    s3_prefix: str = "txla_roms.icechunk"
+    s3_prefix: str = "txla-roms/txla_roms.icechunk"
     s3_region: str = "us-west-2"
     s3_endpoint: str | None = None
     s3_anonymous: bool = False
